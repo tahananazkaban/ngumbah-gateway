@@ -1,0 +1,25 @@
+"""
+Entry point for reading Ngumbah data.
+"""
+type Query {
+  "Returns one tenant, or null with a NOT_FOUND error when it does not exist."
+  tenant(id: ID!): Tenant
+}
+
+"""
+A laundry business using Ngumbah.
+"""
+type Tenant {
+  id: ID!
+  "Business name shown to staff and on receipts."
+  name: String!
+  plan: Plan!
+}
+
+"""
+Subscription plan; there is no billing yet, only the plan marker.
+"""
+enum Plan {
+  FREE
+  PRO
+}

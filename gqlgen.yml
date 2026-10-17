@@ -1,0 +1,19 @@
+schema:
+  - graph/*.graphqls
+
+exec:
+  package: generated
+  layout: single-file
+  filename: internal/graph/generated/generated.go
+
+model:
+  filename: internal/graph/model/models_gen.go
+  package: model
+
+resolver:
+  package: graph
+  layout: follow-schema
+  dir: internal/graph
+  filename_template: "{name}.resolvers.go"
+
+omit_slice_element_pointers: true
