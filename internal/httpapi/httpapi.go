@@ -2,9 +2,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -21,7 +23,7 @@ import (
 
 	"github.com/tahananazkaban/ngumbah-gateway/internal/graph"
 	"github.com/tahananazkaban/ngumbah-gateway/internal/graph/generated"
-	"github.com/tahananazkaban/ngumbah-gateway/internal/tenants"
+	"github.com/tahananazkaban/ngumbah-gateway/internal/telemetry"
 )
 
 const (
@@ -30,9 +32,15 @@ const (
 	readyTimeout    = time.Second
 )
 
+// TenantService is what the HTTP layer needs from the tenant service client.
+type TenantService interface {
+	graph.TenantGetter
+	Status(ctx context.Context, timeout time.Duration) (serving bool, label string)
+}
+
 // Options wires the gateway's dependencies.
 type Options struct {
-	Tenants     *tenants.Client
+	Tenants     TenantService
 	Development bool
 	CORSOrigins []string
 	Logger      *slog.Logger
@@ -96,37 +104,44 @@ func graphqlHandler(opts Options, logger *slog.Logger) http.Handler {
 		return graphql.DefaultErrorPresenter(ctx, err)
 	})
 	srv.SetRecoverFunc(func(ctx context.Context, p any) error {
-		logger.ErrorContext(ctx, "resolver panic", "panic", p)
+		logger.ErrorContext(ctx, "resolver panic", append([]any{"panic", p}, telemetry.TraceArgs(ctx)...)...)
 		return graph.NewError(ctx, graph.CodeInternal, "internal error")
 	})
 	return srv
 }
 
-func readiness(t *tenants.Client) http.HandlerFunc {
+func readiness(t TenantService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		deps := map[string]string{"tenant-svc": t.Status(r.Context(), readyTimeout)}
-		code := http.StatusOK
-		for _, st := range deps {
-			if st != "SERVING" {
-				code = http.StatusServiceUnavailable
-			}
+		serving, label := t.Status(r.Context(), readyTimeout)
+		code, state := http.StatusOK, "ok"
+		if !serving {
+			code, state = http.StatusServiceUnavailable, "unavailable"
 		}
-		state := "ok"
-		if code != http.StatusOK {
-			state = "unavailable"
-		}
-		writeJSON(w, code, map[string]any{"status": state, "dependencies": deps})
+		writeJSON(w, code, map[string]any{"status": state, "dependencies": map[string]string{"tenant-svc": label}})
 	}
 }
 
-// limitBody rejects declared-oversized bodies early and caps the rest while reading.
+// limitBody answers 413 for bodies over the limit, whether or not their length is declared.
 func limitBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > maxBodyBytes {
+		tooLarge := func() {
 			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+		}
+		if r.ContentLength > maxBodyBytes {
+			tooLarge()
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			tooLarge()
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read request body"})
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -195,9 +210,7 @@ func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 		if operation != "" {
 			args = append(args, "operation", operation)
 		}
-		if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
-			args = append(args, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
-		}
+		args = append(args, telemetry.TraceArgs(r.Context())...)
 		level := slog.LevelInfo
 		// Health probes run every few seconds; keep them out of normal logs
 		if r.URL.Path == "/livez" || r.URL.Path == "/readyz" {

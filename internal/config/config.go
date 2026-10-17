@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 )
@@ -44,6 +45,15 @@ func Load() (Config, error) {
 	}
 	if err := cfg.LogLevel.UnmarshalText([]byte(getenv("GATEWAY_LOG_LEVEL", "info"))); err != nil {
 		errs = append(errs, fmt.Errorf("GATEWAY_LOG_LEVEL: %w", err))
+	}
+	if len(cfg.CORSOrigins) == 0 {
+		errs = append(errs, errors.New("GATEWAY_CORS_ORIGINS must list at least one origin"))
+	}
+	if _, _, err := net.SplitHostPort(cfg.HTTPAddr); err != nil {
+		errs = append(errs, fmt.Errorf("GATEWAY_HTTP_ADDR: %w", err))
+	}
+	if _, _, err := net.SplitHostPort(cfg.TenantSvcAddr); err != nil {
+		errs = append(errs, fmt.Errorf("GATEWAY_TENANT_SVC_ADDR: %w", err))
 	}
 	for _, o := range cfg.CORSOrigins {
 		if o == "*" {

@@ -14,11 +14,7 @@ import (
 
 // Tenant is the resolver for the tenant field.
 func (r *queryResolver) Tenant(ctx context.Context, id string) (*model.Tenant, error) {
-	t, err := r.Tenants.Get(ctx, id)
-	if err != nil {
-		return nil, r.toGraphQLError(ctx, err)
-	}
-	return &model.Tenant{ID: t.ID, Name: t.Name, Plan: model.Plan(t.Plan)}, nil
+	return r.resolveTenant(ctx, id)
 }
 
 // Query returns generated.QueryResolver implementation.

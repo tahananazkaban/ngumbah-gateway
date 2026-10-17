@@ -42,6 +42,8 @@ var (
 	ErrUnavailable = errors.New("tenant service unavailable")
 	// ErrInternal means anything else went wrong; details stay in logs.
 	ErrInternal = errors.New("tenant service internal error")
+	// ErrCanceled means the caller gave up before the tenant service answered.
+	ErrCanceled = errors.New("request canceled")
 )
 
 // Dial creates a lazily connecting, traced gRPC connection to the tenant service.
@@ -90,16 +92,16 @@ func (c *Client) Get(ctx context.Context, id string) (Tenant, error) {
 	return Tenant{ID: t.GetId(), Name: t.GetName(), Plan: plan}, nil
 }
 
-// Status reports the tenant service's gRPC health within the given timeout.
-func (c *Client) Status(ctx context.Context, timeout time.Duration) string {
+// Status reports whether the tenant service is serving, plus a label for the readiness body.
+func (c *Client) Status(ctx context.Context, timeout time.Duration) (serving bool, label string) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	resp, err := c.health.Check(ctx, &healthpb.HealthCheckRequest{Service: tenantv1.TenantService_ServiceDesc.ServiceName})
 	if err != nil {
-		return "UNREACHABLE"
+		return false, "UNREACHABLE"
 	}
-	return resp.GetStatus().String()
+	return resp.GetStatus() == healthpb.HealthCheckResponse_SERVING, resp.GetStatus().String()
 }
 
 var plans = map[tenantv1.Plan]Plan{
@@ -116,6 +118,8 @@ func fromStatus(err error) error {
 		return fmt.Errorf("%w: %w", ErrInvalidID, err)
 	case codes.Unavailable, codes.DeadlineExceeded:
 		return fmt.Errorf("%w: %w", ErrUnavailable, err)
+	case codes.Canceled:
+		return fmt.Errorf("%w: %w", ErrCanceled, err)
 	default:
 		return fmt.Errorf("%w: %w", ErrInternal, err)
 	}
