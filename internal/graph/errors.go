@@ -5,10 +5,9 @@ import (
 	"errors"
 
 	"github.com/99designs/gqlgen/graphql"
-	"github.com/vektah/gqlparser/v2/gqlerror"
-	"go.opentelemetry.io/otel/trace"
-
+	"github.com/tahananazkaban/ngumbah-gateway/internal/telemetry"
 	"github.com/tahananazkaban/ngumbah-gateway/internal/tenants"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 // Error codes returned in extensions.code; the web app switches on these.
@@ -35,6 +34,10 @@ func (r *Resolver) toGraphQLError(ctx context.Context, err error) error {
 		return NewError(ctx, CodeNotFound, "tenant not found")
 	case errors.Is(err, tenants.ErrInvalidID):
 		return NewError(ctx, CodeBadUserInput, "id must be a UUID")
+	case errors.Is(err, tenants.ErrCanceled):
+		// The client is gone; nothing to fix server-side
+		r.Logger.InfoContext(ctx, "request canceled by client", telemetry.TraceArgs(ctx)...)
+		return NewError(ctx, CodeServiceUnavailable, "request canceled")
 	case errors.Is(err, tenants.ErrUnavailable):
 		r.logError(ctx, "downstream unavailable", err)
 		return NewError(ctx, CodeServiceUnavailable, "service temporarily unavailable, try again")
@@ -46,9 +49,5 @@ func (r *Resolver) toGraphQLError(ctx context.Context, err error) error {
 
 // logError keeps the full error server-side, tagged with the request's trace.
 func (r *Resolver) logError(ctx context.Context, msg string, err error) {
-	args := []any{"error", err}
-	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
-		args = append(args, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
-	}
-	r.Logger.ErrorContext(ctx, msg, args...)
+	r.Logger.ErrorContext(ctx, msg, append([]any{"error", err}, telemetry.TraceArgs(ctx)...)...)
 }

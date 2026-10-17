@@ -273,6 +273,30 @@ func TestCORSAllowsOnlyConfiguredOrigin(t *testing.T) {
 	}
 }
 
+func TestCORSOnSimpleRequests(t *testing.T) {
+	h := newHarness(t, harnessOpts{downstream: true})
+	if got := get(h, "/livez", map[string]string{"Origin": webOrigin}).Header().Get("Access-Control-Allow-Origin"); got != webOrigin {
+		t.Errorf("allowed origin: got %q", got)
+	}
+	if got := get(h, "/livez", map[string]string{"Origin": "https://evil.example"}).Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("other origin should get no CORS header, got %q", got)
+	}
+}
+
+func TestOversizedChunkedBodyIsRejected(t *testing.T) {
+	h := newHarness(t, harnessOpts{downstream: true})
+	big := `{"query":"` + strings.Repeat("a", 2<<20) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(big))
+	req.Header.Set("Content-Type", "application/json")
+	// Unknown length, as with chunked transfer encoding
+	req.ContentLength = -1
+	rec := httptest.NewRecorder()
+	h.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("got %d, want 413", rec.Code)
+	}
+}
+
 func TestOversizedBodyIsRejected(t *testing.T) {
 	h := newHarness(t, harnessOpts{downstream: true})
 	big := `{"query":"` + strings.Repeat("a", 2<<20) + `"}`

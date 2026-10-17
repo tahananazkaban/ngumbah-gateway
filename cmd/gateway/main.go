@@ -24,7 +24,7 @@ const usage = `usage: gateway [command]
 
 commands:
   serve    run the HTTP server (default)
-  health   probe the local /readyz endpoint (for container health checks)`
+  health   probe the local /livez endpoint (for container health checks)`
 
 // downstreamTimeout sits above the tenant service's own 2s query timeout so its errors win.
 const downstreamTimeout = 3 * time.Second
@@ -88,7 +88,11 @@ func serve(ctx context.Context, stopSignals func(), cfg config.Config, logger *s
 	}
 
 	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errc <- fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
+		}
+	}()
 	logger.Info("serving", "addr", cfg.HTTPAddr, "env", cfg.Env, "tenant_svc", cfg.TenantSvcAddr)
 
 	select {
@@ -108,7 +112,7 @@ func serve(ctx context.Context, stopSignals func(), cfg config.Config, logger *s
 	return nil
 }
 
-// probeHealth exits 0 when the local /readyz answers 200.
+// probeHealth exits 0 when the local /livez answers 200; readiness is left to /readyz consumers.
 func probeHealth() int {
 	addr := config.HTTPAddr()
 	// A bare ":port" listens on all interfaces; probe it through loopback
@@ -116,14 +120,14 @@ func probeHealth() int {
 		addr = "127.0.0.1" + addr
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://" + addr + "/readyz")
+	resp, err := client.Get("http://" + addr + "/livez")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintln(os.Stderr, "readyz returned", resp.Status)
+		fmt.Fprintln(os.Stderr, "livez returned", resp.Status)
 		return 1
 	}
 	return 0
