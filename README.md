@@ -51,7 +51,7 @@ Messages never include internal details; those are logged with the request's tra
 ## Limits and security
 
 - CORS allows only origins in `GATEWAY_CORS_ORIGINS` (`*` is rejected).
-- Request bodies above 1 MB get 413; query complexity is capped at 100.
+- Request bodies above 1 MB get 413, with or without a `Content-Length`; query complexity is capped at 100.
 - Introspection and the playground are enabled only when `GATEWAY_ENV=development`. The default is `production`.
 
 ## Tracing and logs
@@ -79,4 +79,4 @@ Each request starts a W3C trace or continues the caller's `traceparent`. The tra
 | `make generate` / `make generate-check` | Regenerate gRPC and GraphQL code / fail if committed code is stale |
 | `make docker-build` | Build the container image |
 
-The binary has two subcommands: `serve` (default) and `health` (probes `/readyz`, used by the container).
+The binary has two subcommands: `serve` (default) and `health` (probes `/livez`, used by the container so a backend outage does not restart the gateway).
