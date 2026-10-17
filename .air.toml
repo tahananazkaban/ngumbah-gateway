@@ -1,0 +1,11 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "go build -o ./tmp/gateway ./cmd/gateway"
+entrypoint = ["./tmp/gateway", "serve"]
+include_ext = ["go", "graphqls"]
+exclude_dir = ["tmp", "bin", "gen"]
+
+[log]
+time = false
